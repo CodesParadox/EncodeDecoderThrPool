@@ -16,7 +16,9 @@ typedef struct threadPool{
 	struct job* jobsHead; 
     struct job* jobsTail;
 	int numTasks;
+    int numTasksAlive;
 	pthread_mutex_t *jobMutex;
+    pthread_mutex_t *aliveMutex;
 	pthread_cond_t *mutexCond;
 
 }threadPool;
@@ -66,12 +68,27 @@ void *runThreadWrapper(void* params)
 			pthread_cond_wait(thPool->mutexCond, thPool->jobMutex);
 		}
 
-        pthread_mutex_unlock(thPool->jobMutex);
         currJob = getJob(thPool);
+        pthread_mutex_lock(thPool->aliveMutex);
+        thPool->numTasksAlive++;
+        pthread_mutex_unlock(thPool->aliveMutex);
+        pthread_mutex_unlock(thPool->jobMutex);
         currJob->function(currJob->params);
         free(currJob);
+        pthread_mutex_lock(thPool->aliveMutex);
+        thPool->numTasksAlive--;
+        pthread_mutex_unlock(thPool->aliveMutex);
 
     }while(1); 
+}
+
+int isActive(threadPool *thPool){
+    int isActive = -1;
+    pthread_mutex_lock(thPool->aliveMutex);
+    isActive = thPool->numTasksAlive > 0;
+    pthread_mutex_unlock(thPool->aliveMutex);
+
+    return isActive;
 }
 
 struct threadPool* thPoolInit(int numOfTasks)
@@ -88,6 +105,7 @@ struct threadPool* thPoolInit(int numOfTasks)
     pthread_cond_init(thPool->mutexCond, NULL);
 
     thPool->numTasks = numOfTasks;
+    thPool->numTasksAlive = 0;
     thPool->pool = (pthread_t *) malloc((sizeof(pthread_t) * thPool->numTasks));
     for(int i = 0 ; i < thPool->numTasks ; i++){
         if (pthread_create(&thPool->pool[i], NULL, runThreadWrapper, thPool) != 0)

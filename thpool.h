@@ -36,13 +36,23 @@ int addJob(void (*function)(void* arg), void* params, threadPool* thPool)
     newJob->function = function;
     newJob->params = params;
 
-    thPool->jobsTail->next = newJob;
-    thPool->jobsTail = thPool->jobsTail->next;
+    if(thPool->jobsTail == NULL)
+    {
+        thPool->jobsHead = newJob;
+        thPool->jobsTail = newJob;
+    }
+    else
+    {
+        thPool->jobsTail->next = newJob;
+        thPool->jobsTail = thPool->jobsTail->next;
+    }
 
+    pthread_cond_signal(thPool->mutexCond);
     return 0;
 }
 
-struct job* getJob(threadPool* thPool){
+struct job* getJob(threadPool* thPool)
+{
     struct job* nextJob = thPool->jobsHead;
     if (thPool->jobsHead == thPool->jobsTail)
     {
@@ -53,7 +63,7 @@ struct job* getJob(threadPool* thPool){
     {
         thPool->jobsHead = thPool->jobsHead->next;
     }
-    
+
     return nextJob;
 }
 
@@ -71,6 +81,7 @@ void *runThreadWrapper(void* params)
         currJob = getJob(thPool);
         pthread_mutex_lock(thPool->aliveMutex);
         thPool->numTasksAlive++;
+        printf("%d ",thPool->numTasksAlive);
         pthread_mutex_unlock(thPool->aliveMutex);
         pthread_mutex_unlock(thPool->jobMutex);
         currJob->function(currJob->params);
@@ -82,13 +93,9 @@ void *runThreadWrapper(void* params)
     }while(1); 
 }
 
-int isActive(threadPool *thPool){
-    int isActive = -1;
-    pthread_mutex_lock(thPool->aliveMutex);
-    isActive = thPool->numTasksAlive > 0;
-    pthread_mutex_unlock(thPool->aliveMutex);
-
-    return isActive;
+int numTasksAlive(threadPool *thPool){
+    
+    return thPool->numTasksAlive;
 }
 
 struct threadPool* thPoolInit(int numOfTasks)
@@ -97,12 +104,14 @@ struct threadPool* thPoolInit(int numOfTasks)
     
     thPool->jobMutex = (pthread_mutex_t* ) malloc(sizeof(pthread_mutex_t));
     thPool->mutexCond = (pthread_cond_t* ) malloc(sizeof(pthread_cond_t));
+    thPool->aliveMutex = (pthread_mutex_t* ) malloc(sizeof(pthread_mutex_t));
 
     thPool->jobsHead = NULL;
     thPool->jobsTail = NULL;
 
     pthread_mutex_init(thPool->jobMutex,NULL);
     pthread_cond_init(thPool->mutexCond, NULL);
+    pthread_mutex_init(thPool->aliveMutex,NULL);
 
     thPool->numTasks = numOfTasks;
     thPool->numTasksAlive = 0;
@@ -117,17 +126,31 @@ struct threadPool* thPoolInit(int numOfTasks)
     return thPool;
 }
 
+/*
+DO NOT USE THIS FUNCTION ALREADY, PROBLEM WITH DESTROY COND!!!
+*/
 int poolRelease(threadPool* thPool)
 {
     free(thPool->pool);
-    pthread_cond_destroy(thPool->mutexCond);
+    
 	pthread_mutex_destroy(thPool->jobMutex);
+    pthread_mutex_destroy(thPool->aliveMutex);
+    int i;
+    for(i = 0 ; i < thPool->numTasks ; i++){
+        pthread_cond_signal(thPool->mutexCond);
+    }
+    printf("freed \n");
+    pthread_cond_destroy((thPool->mutexCond));
 
-    while(thPool->jobsHead){
+    while(thPool->jobsHead != NULL){
         struct job* jb= thPool->jobsHead;
         thPool->jobsHead = thPool->jobsHead->next;
         free(jb);
+        printf("freed\n");
     }
+
+    free(thPool->jobsTail);
+    free(thPool->jobsHead);
 
     return 0;
 }
